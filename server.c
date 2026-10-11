@@ -52,28 +52,45 @@ int main(void){
             continue;
         }
 
-        char ip[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
-        printf("client connected from %s:%d\n", ip, ntohs(client_addr.sin_port));
+        pid_t pid = fork();
 
-        printf("accept returned connfd = %d\n", connfd);
-
-        printf("client connected, echoing...\n");
-
-        char buf[1024];
-        ssize_t n;
-
-        while((n = recv(connfd, buf, sizeof(buf), 0)) > 0) {
-            send(connfd, buf, n, 0);
+        if(pid == -1){
+            perror("fork");
+            close(connfd);
+            continue;
         }
 
-        if (n == 0){
-            printf("client disconnected\n");
+        if (pid == 0){
+            close(fd);
+            printf("[child %d] handling client\n", getpid());
+
+            char ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
+            
+            printf("client connected from %s:%d\n", ip, ntohs(client_addr.sin_port));
+            printf("accept returned connfd = %d\n", connfd);
+            printf("client connected, echoing...\n");
+
+            char buf[1024];
+            ssize_t n;
+
+            while((n = recv(connfd, buf, sizeof(buf), 0)) > 0) {
+                send(connfd, buf, n, 0);
+            }
+
+            if (n == 0){
+                printf("client disconnected\n");
+            } else {
+                perror("recv");
+            }
+
+            close(connfd);
+            _exit(0);
+
         } else {
-            perror("recv");
+            close(connfd);
         }
-
-        close(connfd);
+        
     }
     close(fd);
     
