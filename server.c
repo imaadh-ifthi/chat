@@ -41,23 +41,40 @@ int main(void){
     printf("listening on port 8001, waiting for a client...\n");
     //pause();
 
-    struct sockaddr_in client_addr;
-    memset(&client_addr, 0, sizeof(client_addr));
-    socklen_t client_len = sizeof(client_addr);
+    while (1) {   
+        struct sockaddr_in client_addr;
+        memset(&client_addr, 0, sizeof(client_addr));
+        socklen_t client_len = sizeof(client_addr);
 
-    int connfd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
-    if (connfd == -1){
-        perror("accept");
-        return 1;
+        int connfd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
+        if (connfd == -1){
+            perror("accept");
+            continue;
+        }
+
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
+        printf("client connected from %s:%d\n", ip, ntohs(client_addr.sin_port));
+
+        printf("accept returned connfd = %d\n", connfd);
+
+        printf("client connected, echoing...\n");
+
+        char buf[1024];
+        ssize_t n;
+
+        while((n = recv(connfd, buf, sizeof(buf), 0)) > 0) {
+            send(connfd, buf, n, 0);
+        }
+
+        if (n == 0){
+            printf("client disconnected\n");
+        } else {
+            perror("recv");
+        }
+
+        close(connfd);
     }
-
-    char ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
-    printf("client connected from %s:%d\n", ip, ntohs(client_addr.sin_port));
-
-    printf("accept returned connfd = %d\n", connfd);
-
-    close(connfd);
     close(fd);
     
     return 0;
