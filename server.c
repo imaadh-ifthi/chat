@@ -4,6 +4,15 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
+#include <sys/wait.h>
+
+void sigchild_handler(int sig) {
+    // reap all dead children
+    while(waitpid(-1, NULL, WNOHANG) > 0){
+
+    }
+}
 
 int main(void){
     printf("chat server starting...\n");
@@ -40,6 +49,17 @@ int main(void){
     }
     printf("listening on port 8001, waiting for a client...\n");
     //pause();
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigchild_handler;
+    sa.sa_flags = SA_RESTART; //restart interrupted syscalls
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGCHLD, &sa, NULL) == -1){
+        perror("sigaction");
+        return 1;
+    }
 
     while (1) {   
         struct sockaddr_in client_addr;
