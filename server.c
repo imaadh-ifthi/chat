@@ -4,14 +4,73 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
-#include <signal.h>
-#include <sys/wait.h>
+#include <pthread.h>
+#include <stdlib.h>
 
-void sigchild_handler(int sig) {
-    // reap all dead children
-    while(waitpid(-1, NULL, WNOHANG) > 0){
+#define MAX_CLIENTS 2
 
+typedef struct {
+    int fd;
+    int in_use; // 1 if live client, 0 if free
+} Client;
+
+Client clients[MAX_CLIENTS];
+pthread_mutex_t clients_lock = PTHREAD_MUTEX_INITIALIZER;
+
+int add_client(int fd){ //returns 1 if sucessfull, 0 if list is full
+    int ok = 0;
+    pthread_mutex_lock(&clients_lock);
+    for(int i = 0; i < MAX_CLIENTS; i++){
+        if (!clients[i].in_use){
+            clients[i].fd = fd;
+            clients[i].in_use = 1;
+            ok = 1;
+            break;
+        }
     }
+    pthread_mutex_unlock(&clients_lock);
+    return ok;
+
+}
+
+void remove_client(int fd){
+    pthread_mutex_lock(&clients_lock);
+    for(int i = 0; i < MAX_CLIENTS; i++){
+        if(clients[i].in_use && clients[i].fd == fd){
+            clients[i].in_use = 0;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&clients_lock);
+}
+
+void *handle_client(void *arg){
+    int fd = *(int *)arg;
+    free(arg);
+    printf("[thread %lu] client fd=%d joined\n", (unsigned long)pthread_self(), fd);
+
+    printf("[thread %lu] handling client fd=%d\n", (unsigned long)pthread_self(), fd);
+    printf("client connected, echoing...\n");
+
+    char buf[1024];
+    ssize_t n;
+
+    while((n = recv(fd, buf, sizeof(buf), 0)) > 0) {
+        send(fd, buf, n, 0);
+    }
+
+    if (n == 0){
+        printf("client disconnected\n");
+    } else {
+        perror("recv");
+    }
+
+    remove_client(fd);
+    printf("client fd=%d left\n", fd);
+
+    close(fd);
+    return NULL;
+
 }
 
 int main(void){
@@ -50,66 +109,41 @@ int main(void){
     printf("listening on port 8001, waiting for a client...\n");
     //pause();
 
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sigchild_handler;
-    sa.sa_flags = SA_RESTART; //restart interrupted syscalls
-    sigemptyset(&sa.sa_mask);
-
-    if (sigaction(SIGCHLD, &sa, NULL) == -1){
-        perror("sigaction");
-        return 1;
-    }
-
     while (1) {   
         struct sockaddr_in client_addr;
-        memset(&client_addr, 0, sizeof(client_addr));
         socklen_t client_len = sizeof(client_addr);
-
+        
         int connfd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
         if (connfd == -1){
             perror("accept");
             continue;
         }
 
-        pid_t pid = fork();
-
-        if(pid == -1){
-            perror("fork");
+        if(!add_client(connfd)){
+            printf("Server full, rejecting fd=%d\n", connfd);
             close(connfd);
             continue;
         }
 
-        if (pid == 0){
-            close(fd);
-            printf("[child %d] handling client\n", getpid());
-
-            char ip[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
-            
-            printf("client connected from %s:%d\n", ip, ntohs(client_addr.sin_port));
-            printf("accept returned connfd = %d\n", connfd);
-            printf("client connected, echoing...\n");
-
-            char buf[1024];
-            ssize_t n;
-
-            while((n = recv(connfd, buf, sizeof(buf), 0)) > 0) {
-                send(connfd, buf, n, 0);
-            }
-
-            if (n == 0){
-                printf("client disconnected\n");
-            } else {
-                perror("recv");
-            }
-
+        int *pfd = malloc(sizeof(int));
+        if(pfd == NULL){
+            perror("malloc");
             close(connfd);
-            _exit(0);
-
-        } else {
-            close(connfd);
+            continue;
         }
+
+        *pfd = connfd;
+
+        pthread_t tid;
+        int ret = pthread_create(&tid, NULL, handle_client, pfd);
+        if (ret != 0) {
+            fprintf(stderr, "pthread_create failed: %s\n", strerror(ret));
+            close(connfd);
+            free(pfd);
+            continue;
+        }
+
+        pthread_detach(tid);
         
     }
     close(fd);
