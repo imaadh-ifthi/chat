@@ -7,7 +7,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 
-#define MAX_CLIENTS 2
+#define MAX_CLIENTS 10
 
 typedef struct {
     int fd;
@@ -44,19 +44,29 @@ void remove_client(int fd){
     pthread_mutex_unlock(&clients_lock);
 }
 
+void broadcast(int sender_fd, const char* msg, ssize_t len){
+    pthread_mutex_lock(&clients_lock);
+    for(int i = 0; i < MAX_CLIENTS; i++){
+        if(clients[i].in_use && clients[i].fd != sender_fd){
+            send(clients[i].fd, msg, len, 0);
+        }
+    }
+    pthread_mutex_unlock(&clients_lock);
+}
+
 void *handle_client(void *arg){
     int fd = *(int *)arg;
     free(arg);
     printf("[thread %lu] client fd=%d joined\n", (unsigned long)pthread_self(), fd);
 
     printf("[thread %lu] handling client fd=%d\n", (unsigned long)pthread_self(), fd);
-    printf("client connected, echoing...\n");
+    printf("client connected, chatting...\n");
 
     char buf[1024];
     ssize_t n;
 
     while((n = recv(fd, buf, sizeof(buf), 0)) > 0) {
-        send(fd, buf, n, 0);
+        broadcast(fd, buf, n);
     }
 
     if (n == 0){
@@ -128,6 +138,7 @@ int main(void){
         int *pfd = malloc(sizeof(int));
         if(pfd == NULL){
             perror("malloc");
+            remove_client(connfd);
             close(connfd);
             continue;
         }
@@ -138,6 +149,7 @@ int main(void){
         int ret = pthread_create(&tid, NULL, handle_client, pfd);
         if (ret != 0) {
             fprintf(stderr, "pthread_create failed: %s\n", strerror(ret));
+            remove_client(connfd);
             close(connfd);
             free(pfd);
             continue;
