@@ -79,10 +79,17 @@ void *handle_client(void *arg){
     ssize_t n;
 
     char* ask_name = "Enter username: \n";
-    send(fd, ask_name, 18, 0);
+    send(fd, ask_name, strlen(ask_name), 0);
     
     char namebuf[32];
     ssize_t n_ = recv(fd, namebuf, sizeof(namebuf) - 1, 0);
+
+    //catching clients that disconnect before sending a name
+    if(n_ <= 0){
+        remove_client(fd);
+        close(fd);
+        return NULL;
+    }
 
     namebuf[n_] = '\0'; //null termination
     // remove trailing newline if present
@@ -99,6 +106,10 @@ void *handle_client(void *arg){
 
     set_client_name(fd, namebuf);
 
+    char welcome[64];
+    int wlen = snprintf(welcome, sizeof(welcome), "Welcome %s!\n", namebuf);
+    send(fd, welcome, wlen, 0);
+
     //broadcasting user joined announcement
     char join_msg[64];
     int join_len = snprintf(join_msg, sizeof(join_msg), "*** %s joined ***\n", namebuf);
@@ -107,6 +118,11 @@ void *handle_client(void *arg){
 
     //broadcasting chat messages
     while((n = recv(fd, buf, sizeof(buf), 0)) > 0) {
+        //check for /quit before the newline
+        if (n >=5 && strncmp(buf, "/quit", 5) == 0 && (n == 5 || buf[5] == '\n' || buf[5] == '\r')){
+            break; //disconnection
+        }
+
         char outbuf[1100];
         int outlen = snprintf(outbuf, sizeof(outbuf), "%s: %.*s", namebuf, n, buf);
         broadcast(fd, outbuf, outlen);
